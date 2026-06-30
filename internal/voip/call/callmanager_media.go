@@ -9,7 +9,7 @@ import (
 )
 
 // 🔊 [DEC-DBG] contadores temporários p/ localizar o decode mudo na SAÍDA.
-var dbgPktN, dbgUnprotN, dbgDecN int64
+var dbgRelayN, dbgNilN, dbgPktN, dbgUnprotN, dbgDecN int64
 
 func (m *CallManager) initCodec() {
 	if m.codec != nil {
@@ -102,7 +102,11 @@ func (m *CallManager) onRelayData(data []byte) {
 	if len(data) < 12 {
 		return
 	}
-	switch data[1] & 0x7f {
+	pt := data[1] & 0x7f
+	if n := atomic.AddInt64(&dbgRelayN, 1); n == 1 || n%500 == 0 {
+		m.log.Info("🔊[DEC-DBG] onRelayData (pacote do relay chegou)", "n", n, "payloadType", pt, "opusPT", core.PayloadTypeWhatsAppOpus, "h264PT", core.PayloadTypeWhatsAppH264)
+	}
+	switch pt {
 	case core.PayloadTypeWhatsAppOpus:
 		m.handleAudioRelayData(data)
 	case core.PayloadTypeWhatsAppH264:
@@ -113,7 +117,11 @@ func (m *CallManager) onRelayData(data []byte) {
 func (m *CallManager) handleAudioRelayData(data []byte) {
 	m.mu.Lock()
 	if m.srtpSession == nil || m.codec == nil {
+		hasSrtp, hasCodec := m.srtpSession != nil, m.codec != nil
 		m.mu.Unlock()
+		if n := atomic.AddInt64(&dbgNilN, 1); n == 1 || n%500 == 0 {
+			m.log.Info("🔊[DEC-DBG] early-return: srtp/codec nil", "n", n, "hasSrtp", hasSrtp, "hasCodec", hasCodec)
+		}
 		return
 	}
 	ssrc := media.RTPSsrc(data)
