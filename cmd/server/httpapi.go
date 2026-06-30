@@ -17,6 +17,11 @@ import (
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	})
+
 	mux.HandleFunc("GET /api/sessions", s.handleSessionList)
 	mux.HandleFunc("POST /api/sessions", s.handleSessionCreate)
 	mux.HandleFunc("DELETE /api/sessions/{sid}", s.handleSessionDelete)
