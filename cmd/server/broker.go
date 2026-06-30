@@ -40,6 +40,9 @@ type SessionInfo struct {
 	JID    string `json:"jid"`
 	State  string `json:"state"`
 	Paired bool   `json:"paired"`
+	// QR é exposto no status p/ o LionChat, que PARELHA via polling de /api/sessions
+	// (o upstream v1.0.0 só mandava o QR pelo SSE; sem isto a tela fica "pensando").
+	QR string `json:"qr,omitempty"`
 }
 
 type subscriber struct {
