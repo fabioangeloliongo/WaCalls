@@ -87,21 +87,12 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		s.removeCall(c.CallID)
 		s.mgr.broker.endCall(c.CallID, string(c.StateData.EndReason))
 	}
-	var peerAudioN int
 	cm.OnPeerAudio = func(pcm16 []float32) {
 		ac, ok := s.reg.get(callID)
 		if !ok || ac.bridge == nil {
-			if peerAudioN == 0 {
-				s.log.Info("🔊 [PEER-DBG] OnPeerAudio disparou mas bridge==nil", "call", callID)
-				peerAudioN = -1
-			}
 			return
 		}
-		peerAudioN++
-		err := ac.bridge.WritePCM(pcm16)
-		if peerAudioN == 1 || peerAudioN%250 == 0 {
-			s.log.Info("🔊 [PEER-DBG] OnPeerAudio→WritePCM", "call", callID, "frames", peerAudioN, "samples", len(pcm16), "writeErr", err)
-		}
+		_ = ac.bridge.WritePCM(pcm16)
 	}
 	cm.OnPeerVideo = func(au []byte) {
 		ac, ok := s.reg.get(callID)

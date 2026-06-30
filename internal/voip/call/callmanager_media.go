@@ -1,15 +1,11 @@
 package call
 
 import (
-	"sync/atomic"
 	"time"
 	"wacalls/internal/voip/core"
 	"wacalls/internal/voip/media"
 	"wacalls/internal/voip/transport"
 )
-
-// 🔊 [DEC-DBG] contadores temporários p/ localizar o decode mudo na SAÍDA.
-var dbgRelayN, dbgNilN, dbgPktN, dbgUnprotN, dbgDecN int64
 
 func (m *CallManager) initCodec() {
 	if m.codec != nil {
@@ -102,11 +98,7 @@ func (m *CallManager) onRelayData(data []byte) {
 	if len(data) < 12 {
 		return
 	}
-	pt := data[1] & 0x7f
-	if n := atomic.AddInt64(&dbgRelayN, 1); n == 1 || n%500 == 0 {
-		m.log.Info("🔊[DEC-DBG] onRelayData (pacote do relay chegou)", "n", n, "payloadType", pt, "opusPT", core.PayloadTypeWhatsAppOpus, "h264PT", core.PayloadTypeWhatsAppH264)
-	}
-	switch pt {
+	switch data[1] & 0x7f {
 	case core.PayloadTypeWhatsAppOpus:
 		m.handleAudioRelayData(data)
 	case core.PayloadTypeWhatsAppH264:
@@ -117,17 +109,10 @@ func (m *CallManager) onRelayData(data []byte) {
 func (m *CallManager) handleAudioRelayData(data []byte) {
 	m.mu.Lock()
 	if m.srtpSession == nil || m.codec == nil {
-		hasSrtp, hasCodec := m.srtpSession != nil, m.codec != nil
 		m.mu.Unlock()
-		if n := atomic.AddInt64(&dbgNilN, 1); n == 1 || n%500 == 0 {
-			m.log.Info("🔊[DEC-DBG] early-return: srtp/codec nil", "n", n, "hasSrtp", hasSrtp, "hasCodec", hasCodec)
-		}
 		return
 	}
 	ssrc := media.RTPSsrc(data)
-	if n := atomic.AddInt64(&dbgPktN, 1); n == 1 || n%500 == 0 {
-		m.log.Info("🔊[DEC-DBG] pacote audio do relay", "n", n, "ssrc", ssrc, "selfSsrc", m.selfSsrc, "peerSsrcs", m.peerSsrcs, "actualPeerSet", m.actualPeerSet)
-	}
 	if ssrc == m.selfSsrc {
 		m.mu.Unlock()
 		return
@@ -146,9 +131,7 @@ func (m *CallManager) handleAudioRelayData(data []byte) {
 
 	pkt, err := srtp.Unprotect(data)
 	if err != nil {
-		if n := atomic.AddInt64(&dbgUnprotN, 1); n == 1 || n%500 == 0 {
-			m.log.Info("🔊[DEC-DBG] srtp.Unprotect FALHOU", "n", n, "err", err)
-		}
+		m.log.Debug("srtp unprotect error", "err", err)
 		return
 	}
 	if len(pkt.Payload) == 0 {
@@ -156,9 +139,6 @@ func (m *CallManager) handleAudioRelayData(data []byte) {
 	}
 	pcm, err := codec.Decode(pkt.Payload)
 	if err != nil || len(pcm) == 0 {
-		if n := atomic.AddInt64(&dbgDecN, 1); n == 1 || n%500 == 0 {
-			m.log.Info("🔊[DEC-DBG] codec.Decode FALHOU/vazio", "n", n, "err", err, "pcmLen", len(pcm), "payloadLen", len(pkt.Payload))
-		}
 		return
 	}
 	if m.OnPeerAudio != nil {
