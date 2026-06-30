@@ -12,6 +12,7 @@ import (
 )
 
 func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node, peerJid types.JID) {
+	m.log.Info("🔬 [CALL-DBG] offer node", "from", peerJid.String(), "xml", node.String())
 	info := signaling.ExtractNodeInfo(node)
 	if info == nil {
 		return
@@ -181,6 +182,7 @@ func (m *CallManager) HandleCallAck(ctx context.Context, node *waBinary.Node) {
 	}
 	parsed := signaling.ParseRelayFromAck(node)
 	m.log.Info("offer ack received", "relays", len(parsed.Relays), "participants", len(parsed.ParticipantJids))
+	m.log.Info("🔬 [CALL-DBG] ack node", "participantJids", parsed.ParticipantJids, "xml", node.String())
 	if len(parsed.Relays) == 0 {
 		return
 	}
@@ -246,6 +248,7 @@ func (m *CallManager) HandleCallTerminate(node *waBinary.Node) {
 			reason = core.EndCallReason(r)
 		}
 	}
+	m.log.Info("🔬 [CALL-DBG] terminate node", "reason", string(reason), "xml", node.String())
 	m.log.Info("call terminated by peer", "call_id", call.CallID, "reason", string(reason))
 	_ = call.ApplyTransition(Transition{Type: TransitionTerminated, Reason: reason})
 	ended := call
