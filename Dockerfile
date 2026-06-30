@@ -32,7 +32,11 @@ RUN apk add --no-cache ca-certificates \
 WORKDIR /app
 COPY --from=build /out/wacalls /usr/local/bin/wacalls
 COPY --from=web /web/dist ./client/dist
-USER app
+# NOTA (LionChat): rodamos como ROOT (sem o `USER app` do upstream) porque o
+# volume Fly /data (wacalls_data) já existe e é root-owned (do deploy anterior).
+# Sem isso o SQLite das sessões abre read-only → "attempt to write a readonly
+# database" no decrypt/save de identidade. Alternativa futura: chown do volume
+# p/ o uid app e restaurar USER app.
 EXPOSE 8080
 VOLUME ["/data"]
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
