@@ -4,7 +4,7 @@ package media
 
 /*
 #cgo CFLAGS: -I${SRCDIR}/../../../native
-#cgo LDFLAGS: -L${SRCDIR}/../../../native -lopus_mlow
+#cgo LDFLAGS: -L${SRCDIR}/../../../native -lopus_mlow -lm
 
 #include <stdint.h>
 #include <stdlib.h>

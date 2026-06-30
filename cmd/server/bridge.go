@@ -2,11 +2,44 @@ package main
 
 import (
 	"log/slog"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
 )
+
+// iceServersFromEnv monta a lista de ICE servers a partir de env:
+//   WACALLS_STUN_URLS      — CSV de urls stun:
+//   WACALLS_TURN_URLS      — CSV de urls turn: (opcional)
+//   WACALLS_TURN_USERNAME  — usuário do TURN
+//   WACALLS_TURN_CREDENTIAL— credencial do TURN
+func iceServersFromEnv() []webrtc.ICEServer {
+	var servers []webrtc.ICEServer
+	if urls := splitCSV(os.Getenv("WACALLS_STUN_URLS")); len(urls) > 0 {
+		servers = append(servers, webrtc.ICEServer{URLs: urls})
+	}
+	if urls := splitCSV(os.Getenv("WACALLS_TURN_URLS")); len(urls) > 0 {
+		servers = append(servers, webrtc.ICEServer{
+			URLs:       urls,
+			Username:   os.Getenv("WACALLS_TURN_USERNAME"),
+			Credential: os.Getenv("WACALLS_TURN_CREDENTIAL"),
+		})
+	}
+	return servers
+}
+
+// splitCSV divide por vírgula, faz trim e descarta itens vazios.
+func splitCSV(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
 
 type Bridge struct {
 	pc         *webrtc.PeerConnection
@@ -18,7 +51,7 @@ type Bridge struct {
 }
 
 func NewBridge(offerSDP string, log *slog.Logger) (*Bridge, string, error) {
-	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{ICEServers: iceServersFromEnv()})
 	if err != nil {
 		return nil, "", err
 	}
