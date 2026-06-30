@@ -1,0 +1,35 @@
+# fly.toml do liongo-calls (deploy LionChat do WaCalls)
+# Base: upstream JotaDev66/WaCalls (develop, pure-Go) + delta LionChat (auth/ICE/healthz).
+# O health check do Fly usa /healthz (rota nossa). O Dockerfile é o oficial do upstream.
+app = "liongo-calls"
+primary_region = "gru"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[[mounts]]
+  source = "wacalls_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 200
+    soft_limit = 150
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "3s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/healthz"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

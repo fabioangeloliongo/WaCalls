@@ -66,3 +66,36 @@ func publicIPs() []string {
 	}
 	return out
 }
+
+// iceServersFromEnv monta a lista de ICE servers (STUN/TURN) a partir de env.
+// Complementa o SettingEngine (UDP fixo / WACALLS_PUBLIC_IP): aqui são os
+// servidores STUN/TURN que o browser usa p/ atravessar NAT.
+//   WACALLS_STUN_URLS       — CSV de urls stun:
+//   WACALLS_TURN_URLS       — CSV de urls turn: (opcional)
+//   WACALLS_TURN_USERNAME   — usuário do TURN
+//   WACALLS_TURN_CREDENTIAL — credencial do TURN
+func iceServersFromEnv() []webrtc.ICEServer {
+	var servers []webrtc.ICEServer
+	if urls := splitCSV(os.Getenv("WACALLS_STUN_URLS")); len(urls) > 0 {
+		servers = append(servers, webrtc.ICEServer{URLs: urls})
+	}
+	if urls := splitCSV(os.Getenv("WACALLS_TURN_URLS")); len(urls) > 0 {
+		servers = append(servers, webrtc.ICEServer{
+			URLs:       urls,
+			Username:   os.Getenv("WACALLS_TURN_USERNAME"),
+			Credential: os.Getenv("WACALLS_TURN_CREDENTIAL"),
+		})
+	}
+	return servers
+}
+
+// splitCSV divide por vírgula, faz trim e descarta itens vazios.
+func splitCSV(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}

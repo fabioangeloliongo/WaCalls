@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -14,6 +15,11 @@ import (
 
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	})
 
 	mux.HandleFunc("GET /api/sessions", s.handleSessionList)
 	mux.HandleFunc("POST /api/sessions", s.handleSessionCreate)
@@ -34,7 +40,33 @@ func (s *server) routes() http.Handler {
 			mux.Handle("/", http.FileServer(http.Dir(s.staticDir)))
 		}
 	}
-	return withCORS(mux)
+
+	token := os.Getenv("WACALLS_AUTH_TOKEN")
+	withAuth := func(h http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Sem token configurado, OPTIONS (preflight) ou rota não-/api/ (estáticos): passa livre.
+			if token == "" || r.Method == http.MethodOptions || !strings.HasPrefix(r.URL.Path, "/api/") {
+				h.ServeHTTP(w, r)
+				return
+			}
+			// Token aceito via Authorization: Bearer, header X-Auth-Token, ou query ?token=
+			// (o query é necessário p/ EventSource, que não seta headers).
+			provided := ""
+			if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+				provided = strings.TrimPrefix(auth, "Bearer ")
+			} else if t := r.Header.Get("X-Auth-Token"); t != "" {
+				provided = t
+			} else {
+				provided = r.URL.Query().Get("token")
+			}
+			if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+				return
+			}
+			h.ServeHTTP(w, r)
+		})
+	}
+	return withAuth(withCORS(mux))
 }
 
 func withCORS(h http.Handler) http.Handler {
