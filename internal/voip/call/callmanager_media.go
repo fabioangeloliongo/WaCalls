@@ -1,11 +1,15 @@
 package call
 
 import (
+	"sync/atomic"
 	"time"
 	"wacalls/internal/voip/core"
 	"wacalls/internal/voip/media"
 	"wacalls/internal/voip/transport"
 )
+
+// 🔊 [DEC-DBG] contadores temporários p/ localizar o decode mudo na SAÍDA.
+var dbgPktN, dbgUnprotN, dbgDecN int64
 
 func (m *CallManager) initCodec() {
 	if m.codec != nil {
@@ -113,6 +117,9 @@ func (m *CallManager) handleAudioRelayData(data []byte) {
 		return
 	}
 	ssrc := media.RTPSsrc(data)
+	if n := atomic.AddInt64(&dbgPktN, 1); n == 1 || n%500 == 0 {
+		m.log.Info("🔊[DEC-DBG] pacote audio do relay", "n", n, "ssrc", ssrc, "selfSsrc", m.selfSsrc, "peerSsrcs", m.peerSsrcs, "actualPeerSet", m.actualPeerSet)
+	}
 	if ssrc == m.selfSsrc {
 		m.mu.Unlock()
 		return
@@ -131,7 +138,9 @@ func (m *CallManager) handleAudioRelayData(data []byte) {
 
 	pkt, err := srtp.Unprotect(data)
 	if err != nil {
-		m.log.Debug("srtp unprotect error", "err", err)
+		if n := atomic.AddInt64(&dbgUnprotN, 1); n == 1 || n%500 == 0 {
+			m.log.Info("🔊[DEC-DBG] srtp.Unprotect FALHOU", "n", n, "err", err)
+		}
 		return
 	}
 	if len(pkt.Payload) == 0 {
@@ -139,6 +148,9 @@ func (m *CallManager) handleAudioRelayData(data []byte) {
 	}
 	pcm, err := codec.Decode(pkt.Payload)
 	if err != nil || len(pcm) == 0 {
+		if n := atomic.AddInt64(&dbgDecN, 1); n == 1 || n%500 == 0 {
+			m.log.Info("🔊[DEC-DBG] codec.Decode FALHOU/vazio", "n", n, "err", err, "pcmLen", len(pcm), "payloadLen", len(pkt.Payload))
+		}
 		return
 	}
 	if m.OnPeerAudio != nil {
