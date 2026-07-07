@@ -31,6 +31,8 @@ type Session struct {
 
 	mu   sync.Mutex
 	auth AuthSnapshot
+
+	presenceOnce sync.Once // garante 1 keepalive de presença por sessão
 }
 
 func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client) *Session {
@@ -157,6 +159,11 @@ func (s *Session) handleEvent(rawEvt any) {
 			_ = s.mgr.store.setJID(s.mgr.appCtx, s.id, id.String())
 		}
 		s.setAuth(AuthSnapshot{State: "open", Paired: true})
+		// Companheiro (coex) só continua "callable" se anunciar presença ativa.
+		// Sem isso o WA tende a marcar o device como uncallable após a 1ª ligação
+		// → a 2ª nem toca. Anuncia no connect e mantém com keepalive.
+		s.markAvailable(ctx)
+		s.startPresenceKeepalive()
 	case *events.LoggedOut:
 		s.setAuth(AuthSnapshot{State: "logged_out", Paired: false})
 	case *events.CallOffer:
@@ -254,6 +261,48 @@ func (s *Session) removeCall(callID string) {
 	if ac.bridge != nil {
 		ac.bridge.Close()
 	}
+	// Re-anuncia presença ativa ao fim da chamada: é logo APÓS a 1ª ligação que
+	// o WA costuma marcar o companheiro (coex) como uncallable. Re-afirmar aqui
+	// mantém as próximas chamadas tocando.
+	go s.markAvailable(context.Background())
+}
+
+// markAvailable anuncia presença "available" (mantém o device callable no WA).
+// SendPresence exige PushName não-vazio — companheiro às vezes vem sem, então
+// setamos um nome estável antes de anunciar.
+func (s *Session) markAvailable(ctx context.Context) {
+	if s.client == nil || s.client.Store == nil || s.client.Store.ID == nil {
+		return
+	}
+	if s.client.Store.PushName == "" {
+		name := s.name
+		if name == "" {
+			name = "WaCalls"
+		}
+		s.client.Store.PushName = name
+	}
+	if err := s.client.SendPresence(ctx, types.PresenceAvailable); err != nil {
+		s.log.Warn("presence available falhou", "err", err)
+		return
+	}
+	s.log.Info("🟢 presença available anunciada (mantém companheiro callable)")
+}
+
+// startPresenceKeepalive re-anuncia presença periodicamente (o WA expira a
+// presença ativa por inatividade). 1 goroutine por sessão.
+func (s *Session) startPresenceKeepalive() {
+	s.presenceOnce.Do(func() {
+		go func() {
+			t := time.NewTicker(4 * time.Minute)
+			defer t.Stop()
+			for range t.C {
+				if s.client == nil || !s.client.IsConnected() {
+					continue
+				}
+				s.markAvailable(context.Background())
+			}
+		}()
+	})
 }
 
 func (s *Session) terminateCall(callID string, reason core.EndCallReason) {
