@@ -37,7 +37,9 @@ func BuildOfferStanza(ctx context.Context, sock core.VoipSocket, callID string, 
 	var offerContent []waBinary.Node
 
 	if token, err := sock.GetTCToken(ctx, wanode.MustJID(wanode.CleanJID(peerJid.String()))); err == nil && len(token) > 0 {
-		offerContent = append(offerContent, waBinary.Node{Tag: "privacy", Content: token})
+		// tag CORRETA é "tctoken" (o whatsmeow usa Tag:"tctoken"); com "privacy"
+		// o servidor ignora o token e o offer some sem ack (fix do AstraCalls).
+		offerContent = append(offerContent, waBinary.Node{Tag: "tctoken", Content: token})
 	}
 
 	offerContent = append(offerContent,
