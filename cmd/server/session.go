@@ -187,11 +187,24 @@ func (s *Session) handleEvent(rawEvt any) {
 			ac.cm.HandleCallTransport(ctx, wrapCall(evt.From, evt.Data), evt.From)
 		}
 	case *events.CallTerminate:
+		s.log.Info("🔬 [CALL-DBG] terminate evt", "from", evt.From.String(), "self", s.isSelfDevice(evt.From))
 		if ac, ok := s.callForEvent(evt.From, evt.Data); ok {
+			// COEX/multi-device: um terminate/reject vindo de um device da NOSSA
+			// PRÓPRIA conta (ex.: hosted "…:99") NÃO encerra a chamada — o chamador
+			// ainda está tocando. Só o peer real (o chamador) pode encerrar.
+			if s.isSelfDevice(evt.From) {
+				s.log.Info("🛡️ ignorando 'terminate' de device irmão (mantém o ring)", "from", evt.From.String())
+				return
+			}
 			ac.cm.HandleCallTerminate(wrapCall(evt.From, evt.Data))
 		}
 	case *events.CallReject:
+		s.log.Info("🔬 [CALL-DBG] reject evt", "from", evt.From.String(), "self", s.isSelfDevice(evt.From))
 		if ac, ok := s.callForEvent(evt.From, evt.Data); ok {
+			if s.isSelfDevice(evt.From) {
+				s.log.Info("🛡️ ignorando 'reject' de device irmão (mantém o ring)", "from", evt.From.String())
+				return
+			}
 			ac.cm.HandleCallTerminate(wrapCall(evt.From, evt.Data))
 		}
 	}
