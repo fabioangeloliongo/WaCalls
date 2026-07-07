@@ -169,7 +169,17 @@ func (s *Session) handleEvent(rawEvt any) {
 	case *events.CallOffer:
 		s.onIncomingOffer(ctx, evt)
 	case *events.CallAccept:
+		s.log.Info("🔬 [CALL-DBG] accept node", "from", evt.From.String())
 		if ac, ok := s.callForEvent(evt.From, evt.Data); ok {
+			// COEX/multi-device: numa chamada ENTRANTE nós atendemos ENVIANDO
+			// accept (doAccept), nunca RECEBENDO. Um accept recebido aqui vem de
+			// outro device da própria conta (ex.: hosted "…:99") reivindicando a
+			// chamada → transicionava pra "atendida" e sumia/não tocava o dock.
+			// Ignoramos: assim o dock/IA continua podendo atender.
+			if ac.cm.CurrentIsIncoming() || s.isSelfDevice(evt.From) {
+				s.log.Info("🛡️ ignorando 'accept' recebido em chamada entrante (coex; mantém o dock)", "from", evt.From.String())
+				return
+			}
 			ac.cm.HandleCallAccept(ctx, wrapCall(evt.From, evt.Data), evt.From)
 		}
 	case *events.CallTransport:
@@ -265,6 +275,25 @@ func (s *Session) removeCall(callID string) {
 	// o WA costuma marcar o companheiro (coex) como uncallable. Re-afirmar aqui
 	// mantém as próximas chamadas tocando.
 	go s.markAvailable(context.Background())
+}
+
+// isSelfDevice: true quando o JID é de um device da NOSSA PRÓPRIA conta (mesmo
+// user do nosso PN ou LID), ex.: o lado hosted da coex "…:99@hosted.lid".
+func (s *Session) isSelfDevice(from types.JID) bool {
+	if s.client == nil || s.client.Store == nil {
+		return false
+	}
+	u := from.User
+	if u == "" {
+		return false
+	}
+	if lid := s.client.Store.LID; lid.User != "" && lid.User == u {
+		return true
+	}
+	if id := s.client.Store.ID; id != nil && id.User == u {
+		return true
+	}
+	return false
 }
 
 // markAvailable anuncia presença "available" (mantém o device callable no WA).

@@ -243,6 +243,15 @@ func (m *CallManager) ownCredJid() string {
 	return m.sock.OwnPN().String()
 }
 
+// CurrentIsIncoming reporta se a chamada atual é ENTRANTE (nós somos o callee).
+// Numa entrante nós atendemos ENVIANDO accept; um accept RECEBIDO nunca é
+// legítimo (vem de outro device da conta em coex/multi-device).
+func (m *CallManager) CurrentIsIncoming() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.currentCall != nil && !m.currentCall.IsInitiator()
+}
+
 type CallError struct{ Msg string }
 
 func (e *CallError) Error() string { return e.Msg }
