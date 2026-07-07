@@ -272,6 +272,21 @@ func (m *CallManager) HandleCallTerminate(node *waBinary.Node) {
 			reason = core.EndCallReason(r)
 		}
 	}
+	// COEX / multi-device: um device IRMÃO da própria conta (ex.: o lado hosted
+	// "…:99@hosted.lid") manda <reject reason="uncallable"/> quando ELE não vai
+	// atender. O WhatsApp repassa esse reject a TODOS os devices da conta — mas
+	// isso NÃO significa que a ligação acabou: o nosso companheiro recebeu a
+	// oferta e ainda pode tocar/atender. Tratar como término derruba o ring do
+	// dock (era a causa de "1ª toca, 2ª não"). Ignoramos; um fim REAL chega com
+	// outro reason (timeout/cancelled/user_ended) vindo do próprio chamador.
+	if string(reason) == "uncallable" {
+		from := wanode.AttrString(node.Attrs, "from")
+		m.mu.Unlock()
+		m.log.Info("🛡️ ignorando reject 'uncallable' de device irmão (mantém o ring)",
+			"call_id", call.CallID, "from", from)
+		return
+	}
+
 	m.log.Info("call terminated by peer", "call_id", call.CallID, "reason", string(reason))
 	_ = call.ApplyTransition(Transition{Type: TransitionTerminated, Reason: reason})
 	ended := call

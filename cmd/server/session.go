@@ -31,6 +31,8 @@ type Session struct {
 
 	mu   sync.Mutex
 	auth AuthSnapshot
+
+	presenceOnce sync.Once // garante 1 keepalive de presença por sessão
 }
 
 func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client) *Session {
@@ -157,12 +159,27 @@ func (s *Session) handleEvent(rawEvt any) {
 			_ = s.mgr.store.setJID(s.mgr.appCtx, s.id, id.String())
 		}
 		s.setAuth(AuthSnapshot{State: "open", Paired: true})
+		// Companheiro (coex) só continua "callable" se anunciar presença ativa.
+		// Sem isso o WA tende a marcar o device como uncallable após a 1ª ligação
+		// → a 2ª nem toca. Anuncia no connect e mantém com keepalive.
+		s.markAvailable(ctx)
+		s.startPresenceKeepalive()
 	case *events.LoggedOut:
 		s.setAuth(AuthSnapshot{State: "logged_out", Paired: false})
 	case *events.CallOffer:
 		s.onIncomingOffer(ctx, evt)
 	case *events.CallAccept:
+		s.log.Info("🔬 [CALL-DBG] accept node", "from", evt.From.String())
 		if ac, ok := s.callForEvent(evt.From, evt.Data); ok {
+			// COEX/multi-device: numa chamada ENTRANTE nós atendemos ENVIANDO
+			// accept (doAccept), nunca RECEBENDO. Um accept recebido aqui vem de
+			// outro device da própria conta (ex.: hosted "…:99") reivindicando a
+			// chamada → transicionava pra "atendida" e sumia/não tocava o dock.
+			// Ignoramos: assim o dock/IA continua podendo atender.
+			if ac.cm.CurrentIsIncoming() || s.isSelfDevice(evt.From) {
+				s.log.Info("🛡️ ignorando 'accept' recebido em chamada entrante (coex; mantém o dock)", "from", evt.From.String())
+				return
+			}
 			ac.cm.HandleCallAccept(ctx, wrapCall(evt.From, evt.Data), evt.From)
 		}
 	case *events.CallTransport:
@@ -170,11 +187,24 @@ func (s *Session) handleEvent(rawEvt any) {
 			ac.cm.HandleCallTransport(ctx, wrapCall(evt.From, evt.Data), evt.From)
 		}
 	case *events.CallTerminate:
+		s.log.Info("🔬 [CALL-DBG] terminate evt", "from", evt.From.String(), "self", s.isSelfDevice(evt.From))
 		if ac, ok := s.callForEvent(evt.From, evt.Data); ok {
+			// COEX/multi-device: um terminate/reject vindo de um device da NOSSA
+			// PRÓPRIA conta (ex.: hosted "…:99") NÃO encerra a chamada — o chamador
+			// ainda está tocando. Só o peer real (o chamador) pode encerrar.
+			if s.isSelfDevice(evt.From) {
+				s.log.Info("🛡️ ignorando 'terminate' de device irmão (mantém o ring)", "from", evt.From.String())
+				return
+			}
 			ac.cm.HandleCallTerminate(wrapCall(evt.From, evt.Data))
 		}
 	case *events.CallReject:
+		s.log.Info("🔬 [CALL-DBG] reject evt", "from", evt.From.String(), "self", s.isSelfDevice(evt.From))
 		if ac, ok := s.callForEvent(evt.From, evt.Data); ok {
+			if s.isSelfDevice(evt.From) {
+				s.log.Info("🛡️ ignorando 'reject' de device irmão (mantém o ring)", "from", evt.From.String())
+				return
+			}
 			ac.cm.HandleCallTerminate(wrapCall(evt.From, evt.Data))
 		}
 	}
@@ -254,6 +284,67 @@ func (s *Session) removeCall(callID string) {
 	if ac.bridge != nil {
 		ac.bridge.Close()
 	}
+	// Re-anuncia presença ativa ao fim da chamada: é logo APÓS a 1ª ligação que
+	// o WA costuma marcar o companheiro (coex) como uncallable. Re-afirmar aqui
+	// mantém as próximas chamadas tocando.
+	go s.markAvailable(context.Background())
+}
+
+// isSelfDevice: true quando o JID é de um device da NOSSA PRÓPRIA conta (mesmo
+// user do nosso PN ou LID), ex.: o lado hosted da coex "…:99@hosted.lid".
+func (s *Session) isSelfDevice(from types.JID) bool {
+	if s.client == nil || s.client.Store == nil {
+		return false
+	}
+	u := from.User
+	if u == "" {
+		return false
+	}
+	if lid := s.client.Store.LID; lid.User != "" && lid.User == u {
+		return true
+	}
+	if id := s.client.Store.ID; id != nil && id.User == u {
+		return true
+	}
+	return false
+}
+
+// markAvailable anuncia presença "available" (mantém o device callable no WA).
+// SendPresence exige PushName não-vazio — companheiro às vezes vem sem, então
+// setamos um nome estável antes de anunciar.
+func (s *Session) markAvailable(ctx context.Context) {
+	if s.client == nil || s.client.Store == nil || s.client.Store.ID == nil {
+		return
+	}
+	if s.client.Store.PushName == "" {
+		name := s.name
+		if name == "" {
+			name = "WaCalls"
+		}
+		s.client.Store.PushName = name
+	}
+	if err := s.client.SendPresence(ctx, types.PresenceAvailable); err != nil {
+		s.log.Warn("presence available falhou", "err", err)
+		return
+	}
+	s.log.Info("🟢 presença available anunciada (mantém companheiro callable)")
+}
+
+// startPresenceKeepalive re-anuncia presença periodicamente (o WA expira a
+// presença ativa por inatividade). 1 goroutine por sessão.
+func (s *Session) startPresenceKeepalive() {
+	s.presenceOnce.Do(func() {
+		go func() {
+			t := time.NewTicker(4 * time.Minute)
+			defer t.Stop()
+			for range t.C {
+				if s.client == nil || !s.client.IsConnected() {
+					continue
+				}
+				s.markAvailable(context.Background())
+			}
+		}()
+	})
 }
 
 func (s *Session) terminateCall(callID string, reason core.EndCallReason) {
