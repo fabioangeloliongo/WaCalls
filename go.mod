@@ -7,7 +7,7 @@ require (
 	github.com/pion/ice/v4 v4.2.7
 	github.com/pion/webrtc/v4 v4.2.15
 	github.com/rs/zerolog v1.35.1
-	go.mau.fi/whatsmeow v0.0.0-20260622185415-5f04eac6dbbb
+	go.mau.fi/whatsmeow v0.0.0-20260709092057-73fe7355f59f
 	google.golang.org/protobuf v1.36.11
 	modernc.org/sqlite v1.53.0
 )
