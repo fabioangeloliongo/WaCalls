@@ -49,6 +49,22 @@ func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client) 
 	return s
 }
 
+// callerPhone devolve o telefone real (só dígitos) do chamador a partir do JID/LID
+// da chamada de entrada, via ResolvePNForLID (mapeamento LID→telefone do whatsmeow).
+// Vazio quando não há mapping (ex.: chamador nunca interagido) — o CRM então trata
+// como contato só-LID e faz backfill quando uma mensagem trouxer o número.
+func (s *Session) callerPhone(peerJid string) string {
+	jid, err := types.ParseJID(peerJid)
+	if err != nil || jid.IsEmpty() {
+		return ""
+	}
+	pn := wa.NewSocket(s.client).ResolvePNForLID(context.Background(), jid)
+	if pn.Server == types.DefaultUserServer && pn.User != "" {
+		return pn.User
+	}
+	return ""
+}
+
 func (s *Session) createCall(callID string) *call.CallManager {
 	cm := call.NewCallManager(wa.NewSocket(s.client), s.log)
 	s.wireCall(cm, callID)
@@ -58,11 +74,14 @@ func (s *Session) createCall(callID string) *call.CallManager {
 
 func (s *Session) wireCall(cm *call.CallManager, callID string) {
 	cm.OnIncoming = func(c *call.CallInfo) {
+		// 📞 Resolve o TELEFONE real do chamador (o WhatsApp entrega o LID em chamadas).
+		// Sem isso, o CRM recebia o LID e o gravava como telefone (contato inalcançável).
+		phone := s.callerPhone(c.PeerJid)
 		s.mgr.broker.upsertCall(CallRecord{
-			SessionID: s.id, CallID: c.CallID, Direction: "inbound", Peer: c.PeerJid,
+			SessionID: s.id, CallID: c.CallID, Direction: "inbound", Peer: c.PeerJid, Phone: phone,
 			StartedAt: time.Now().UnixMilli(), Status: StatusRinging,
 		})
-		s.mgr.broker.emitIncoming(s.id, c.CallID, c.PeerJid, c.MediaType == core.CallMediaTypeVideo)
+		s.mgr.broker.emitIncoming(s.id, c.CallID, c.PeerJid, phone, c.MediaType == core.CallMediaTypeVideo)
 	}
 	cm.OnStateChange = func(c *call.CallInfo) {
 		if c.IsEnded() {

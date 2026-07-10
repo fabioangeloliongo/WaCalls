@@ -22,6 +22,7 @@ type CallRecord struct {
 	Owner     *string    `json:"owner"`
 	Direction string     `json:"direction"`
 	Peer      string     `json:"peer"`
+	Phone     string     `json:"phone,omitempty"` // telefone real do chamador (LID→PN resolvido)
 	StartedAt int64      `json:"startedAt"`
 	Status    CallStatus `json:"status"`
 	EndedAt   *int64     `json:"endedAt,omitempty"`
@@ -196,9 +197,9 @@ func (b *Broker) broadcastCallList() {
 	b.broadcast(map[string]any{"type": "call-list", "calls": list})
 }
 
-func (b *Broker) emitIncoming(sessionID, id, peer string, video bool) {
+func (b *Broker) emitIncoming(sessionID, id, peer, phone string, video bool) {
 	b.broadcast(map[string]any{
-		"type": "incoming", "sessionId": sessionID, "id": id, "peer": peer,
+		"type": "incoming", "sessionId": sessionID, "id": id, "peer": peer, "phone": phone,
 		"video": video, "offeredAt": time.Now().UnixMilli(),
 	})
 }

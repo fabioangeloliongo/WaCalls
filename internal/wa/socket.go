@@ -122,3 +122,20 @@ func (s *Socket) ResolveLIDForPN(ctx context.Context, pn types.JID) types.JID {
 	}
 	return pn
 }
+
+// ResolvePNForLID faz o INVERSO de ResolveLIDForPN: dado o LID (@lid) de quem
+// LIGOU (chamada de ENTRADA), devolve o JID de telefone (@s.whatsapp.net) via o
+// mapeamento do whatsmeow (Store.LIDs.GetPNForLID). Se já for telefone (não-LID)
+// ou não houver mapping, devolve como veio. Usado pra o CRM receber o número real
+// do chamador em vez do LID.
+func (s *Socket) ResolvePNForLID(ctx context.Context, lid types.JID) types.JID {
+	if lid.Server != types.HiddenUserServer {
+		return lid // já é telefone (ou não é LID)
+	}
+	if s.cli.Store != nil && s.cli.Store.LIDs != nil {
+		if pn, err := s.cli.Store.LIDs.GetPNForLID(ctx, lid); err == nil && !pn.IsEmpty() {
+			return pn
+		}
+	}
+	return lid
+}
