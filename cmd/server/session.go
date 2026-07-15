@@ -128,17 +128,17 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 // entrega um 'terminate' no no-answer → sem isto a chamada fica em "ringing" pra sempre no
 // registro e esgota o pool de concorrência (max-calls-per-session). defaultMaxCallDuration:
 // teto da chamada ATENDIDA (defesa p/ "atende e cala" que nunca desliga).
-const ringTimeout = 60 * time.Second
+const defaultRingTimeout = 60 * time.Second
 const defaultMaxCallDuration = 5 * time.Minute
 
-func (s *Session) startOutgoing(ctx context.Context, peer types.JID, isVideo bool, maxDurationMs int) (string, error) {
+func (s *Session) startOutgoing(ctx context.Context, peer types.JID, isVideo bool, maxDurationMs int, ringTimeoutMs int) (string, error) {
 	callID := signaling.GenerateCallID()
 	cm := s.createCall(callID)
 	if err := cm.StartCall(ctx, callID, peer, isVideo); err != nil {
 		s.removeCall(callID)
 		return "", err
 	}
-	go s.watchdogCall(callID, maxDurationMs)
+	go s.watchdogCall(callID, maxDurationMs, ringTimeoutMs)
 	return callID, nil
 }
 
@@ -146,10 +146,17 @@ func (s *Session) startOutgoing(ctx context.Context, peer types.JID, isVideo boo
 // (1) não atendidas após ringTimeout (no-answer sem 'terminate' do WA) e (2) atendidas
 // que passam do teto de duração. EndCall dispara OnEnded → removeCall (libera o slot +
 // manda terminate ao peer). Só encerra se o estado ainda justificar (não mata chamada viva).
-func (s *Session) watchdogCall(callID string, maxDurationMs int) {
+func (s *Session) watchdogCall(callID string, maxDurationMs int, ringTimeoutMs int) {
 	maxDur := time.Duration(maxDurationMs) * time.Millisecond
 	if maxDur <= 0 {
 		maxDur = defaultMaxCallDuration
+	}
+	ringTimeout := time.Duration(ringTimeoutMs) * time.Millisecond
+	if ringTimeout <= 0 {
+		ringTimeout = defaultRingTimeout
+	}
+	if ringTimeout >= maxDur {
+		ringTimeout = defaultRingTimeout // ring nunca ≥ duração total
 	}
 
 	// (1) ring timeout — encerra se AINDA estiver tocando (ninguém atendeu)
