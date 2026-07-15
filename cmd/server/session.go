@@ -180,8 +180,10 @@ func (s *Session) watchdogCall(callID string, maxDurationMs int, ringTimeoutMs i
 		return
 	}
 	if cc := ac2.cm.CurrentCall(); cc != nil && !cc.IsEnded() {
+		// user_ended (não timeout): foi uma chamada ATENDIDA que encerramos pelo teto →
+		// o CRM classifica como concluída, não como "não atendeu". (ring timeout = timeout)
 		s.log.Info("⏰ teto de duração: chamada encerrada", "call_id", callID, "max_ms", maxDurationMs)
-		_ = ac2.cm.EndCall(context.Background(), core.EndCallReasonTimeout)
+		_ = ac2.cm.EndCall(context.Background(), core.EndCallReasonUserEnded)
 	}
 }
 
