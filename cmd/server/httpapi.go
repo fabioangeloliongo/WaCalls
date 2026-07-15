@@ -215,7 +215,7 @@ func (s *server) doStartCall(sess *Session, w http.ResponseWriter, r *http.Reque
 	}
 	peer := types.NewJID(normalizePhone(body.Phone), types.DefaultUserServer)
 
-	callID, err := sess.startOutgoing(r.Context(), peer, body.Video)
+	callID, err := sess.startOutgoing(r.Context(), peer, body.Video, body.DurationMs)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

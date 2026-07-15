@@ -124,14 +124,58 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 	}
 }
 
-func (s *Session) startOutgoing(ctx context.Context, peer types.JID, isVideo bool) (string, error) {
+// ringTimeout: tempo máximo TOCANDO sem atender antes de encerrar. O WhatsApp nem sempre
+// entrega um 'terminate' no no-answer → sem isto a chamada fica em "ringing" pra sempre no
+// registro e esgota o pool de concorrência (max-calls-per-session). defaultMaxCallDuration:
+// teto da chamada ATENDIDA (defesa p/ "atende e cala" que nunca desliga).
+const ringTimeout = 60 * time.Second
+const defaultMaxCallDuration = 5 * time.Minute
+
+func (s *Session) startOutgoing(ctx context.Context, peer types.JID, isVideo bool, maxDurationMs int) (string, error) {
 	callID := signaling.GenerateCallID()
 	cm := s.createCall(callID)
 	if err := cm.StartCall(ctx, callID, peer, isVideo); err != nil {
 		s.removeCall(callID)
 		return "", err
 	}
+	go s.watchdogCall(callID, maxDurationMs)
 	return callID, nil
+}
+
+// watchdogCall força o encerramento de chamadas que ficariam presas no registro:
+// (1) não atendidas após ringTimeout (no-answer sem 'terminate' do WA) e (2) atendidas
+// que passam do teto de duração. EndCall dispara OnEnded → removeCall (libera o slot +
+// manda terminate ao peer). Só encerra se o estado ainda justificar (não mata chamada viva).
+func (s *Session) watchdogCall(callID string, maxDurationMs int) {
+	maxDur := time.Duration(maxDurationMs) * time.Millisecond
+	if maxDur <= 0 {
+		maxDur = defaultMaxCallDuration
+	}
+
+	// (1) ring timeout — encerra se AINDA estiver tocando (ninguém atendeu)
+	time.Sleep(ringTimeout)
+	ac, ok := s.reg.get(callID)
+	if !ok {
+		return // já encerrada/removida
+	}
+	if cc := ac.cm.CurrentCall(); cc != nil && cc.IsRinging() {
+		s.log.Info("⏰ ring timeout: chamada não atendida encerrada", "call_id", callID)
+		_ = ac.cm.EndCall(context.Background(), core.EndCallReasonTimeout)
+		return
+	}
+
+	// (2) teto de duração — encerra a chamada atendida que ficou pendurada
+	if remaining := maxDur - ringTimeout; remaining > 0 {
+		time.Sleep(remaining)
+	}
+	ac2, ok2 := s.reg.get(callID)
+	if !ok2 {
+		return
+	}
+	if cc := ac2.cm.CurrentCall(); cc != nil && !cc.IsEnded() {
+		s.log.Info("⏰ teto de duração: chamada encerrada", "call_id", callID, "max_ms", maxDurationMs)
+		_ = ac2.cm.EndCall(context.Background(), core.EndCallReasonTimeout)
+	}
 }
 
 func (s *Session) callForEvent(from types.JID, data *waBinary.Node) (*activeCall, bool) {
