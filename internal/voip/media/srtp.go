@@ -17,7 +17,10 @@ const (
 	SrtpErrAuthFailed     SrtpErrorType = "auth_failed"
 	SrtpErrEncryption     SrtpErrorType = "encryption"
 	SrtpErrDecryption     SrtpErrorType = "decryption"
+	SrtpErrReplay         SrtpErrorType = "replay"
 )
+
+const srtpReplayWindowSize = 64
 
 type SrtpError struct {
 	Type SrtpErrorType
@@ -34,6 +37,10 @@ type SrtpContext struct {
 	lastSeq     uint16
 	initialized bool
 	authTagLen  int
+
+	replayHighest uint64
+	replayWindow  uint64
+	replaySeen    bool
 }
 
 func NewSrtpContext(keying core.SrtpKeyingMaterial, authTagLen int) (*SrtpContext, error) {
@@ -109,8 +116,17 @@ func (c *SrtpContext) Unprotect(data []byte) (*RtpPacket, error) {
 		return nil, &SrtpError{SrtpErrPacketTooShort, fmt.Sprintf("no payload: %dB total, %dB header, auth=%d", len(data), headerSize, c.authTagLen)}
 	}
 
-	c.updateRoc(header.SequenceNumber)
-	index := c.packetIndex(header.SequenceNumber)
+	roc := c.estimateRoc(header.SequenceNumber)
+	index := (uint64(roc) << 16) | uint64(header.SequenceNumber)
+	if err := c.replayCheck(index); err != nil {
+		return nil, err
+	}
+	expected := c.computeAuthTag(data[:headerSize+payloadLen], roc, c.authTagLen)
+	if !hmac.Equal(expected, data[headerSize+payloadLen:]) {
+		return nil, &SrtpError{SrtpErrAuthFailed, fmt.Sprintf("auth tag mismatch for seq %d", header.SequenceNumber)}
+	}
+	c.commitRoc(roc, header.SequenceNumber)
+	c.replayUpdate(index)
 
 	iv := c.generateIV(header.Ssrc, index)
 	decrypted := make([]byte, payloadLen)
@@ -133,6 +149,73 @@ func (c *SrtpContext) updateRoc(seq uint16) {
 		c.roc++
 	}
 	c.lastSeq = seq
+}
+
+func (c *SrtpContext) estimateRoc(seq uint16) uint32 {
+	if !c.initialized {
+		return c.roc
+	}
+	if c.lastSeq < 0x8000 {
+		if int32(seq)-int32(c.lastSeq) > 0x8000 {
+			return c.roc - 1
+		}
+		return c.roc
+	}
+	if int32(c.lastSeq)-int32(seq) > 0x8000 {
+		return c.roc + 1
+	}
+	return c.roc
+}
+
+func (c *SrtpContext) commitRoc(v uint32, seq uint16) {
+	if !c.initialized {
+		c.lastSeq = seq
+		c.initialized = true
+		return
+	}
+	switch v {
+	case c.roc:
+		if seq > c.lastSeq {
+			c.lastSeq = seq
+		}
+	case c.roc + 1:
+		c.roc = v
+		c.lastSeq = seq
+	}
+}
+
+func (c *SrtpContext) replayCheck(index uint64) error {
+	if !c.replaySeen || index > c.replayHighest {
+		return nil
+	}
+	delta := c.replayHighest - index
+	if delta >= srtpReplayWindowSize {
+		return &SrtpError{SrtpErrReplay, fmt.Sprintf("index %d older than replay window", index)}
+	}
+	if c.replayWindow&(1<<delta) != 0 {
+		return &SrtpError{SrtpErrReplay, fmt.Sprintf("duplicate index %d", index)}
+	}
+	return nil
+}
+
+func (c *SrtpContext) replayUpdate(index uint64) {
+	if !c.replaySeen {
+		c.replaySeen = true
+		c.replayHighest = index
+		c.replayWindow = 1
+		return
+	}
+	if index > c.replayHighest {
+		delta := index - c.replayHighest
+		if delta >= srtpReplayWindowSize {
+			c.replayWindow = 1
+		} else {
+			c.replayWindow = c.replayWindow<<delta | 1
+		}
+		c.replayHighest = index
+		return
+	}
+	c.replayWindow |= 1 << (c.replayHighest - index)
 }
 
 func (c *SrtpContext) packetIndex(seq uint16) uint64 {
