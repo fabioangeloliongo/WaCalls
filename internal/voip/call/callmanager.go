@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"time"
 	callvideo "wacalls/internal/voip/call/video"
 	"wacalls/internal/voip/core"
 	"wacalls/internal/voip/media"
@@ -41,6 +42,8 @@ type CallManager struct {
 	captureBuf   []float32
 	sendLoopStop chan struct{}
 
+	reconnectTimer *time.Timer // grace timer da reconexão (mídia perdida → encerra se não voltar)
+
 	audioTimelineSet   bool
 	audioBaseTs        uint32
 	audioPlayedSamples uint64
@@ -64,6 +67,7 @@ func NewCallManager(sock core.VoipSocket, log *slog.Logger) *CallManager {
 	relay := transport.NewSctpRelayManager(log)
 	relay.SetOnConnected(func(ip string, port int) { m.onRelayConnected() })
 	relay.SetOnReceive(func(data []byte) { m.onRelayData(data) })
+	relay.SetOnUsableChange(func(usable int) { m.onRelayUsableChange(usable) })
 	m.relay = relay
 	m.video = callvideo.New(log, relay)
 	m.video.OnFrame = func(au []byte) {

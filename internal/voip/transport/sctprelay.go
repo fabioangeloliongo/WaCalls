@@ -62,6 +62,10 @@ type SctpRelayManager struct {
 	onConnected func(ip string, port int)
 
 	onReceive func(data []byte)
+
+	// onUsableChange é chamado quando o nº de relays ABERTOS muda (open/fail/close).
+	// O callmanager usa isso p/ detectar perda (usable==0) e restauração (usable>0) de mídia.
+	onUsableChange func(usable int)
 }
 
 func NewSctpRelayManager(log *slog.Logger) *SctpRelayManager {
@@ -86,6 +90,17 @@ func (m *SctpRelayManager) SetStreamSsrcs(selfSsrcs, peerSsrcs []uint32) {
 func (m *SctpRelayManager) SetOnConnected(fn func(ip string, port int)) { m.onConnected = fn }
 
 func (m *SctpRelayManager) SetOnReceive(fn func(data []byte)) { m.onReceive = fn }
+
+func (m *SctpRelayManager) SetOnUsableChange(fn func(usable int)) { m.onUsableChange = fn }
+
+// notifyUsable informa o nº atual de relays abertos. Chamado FORA do m.mu (ConnectedCount
+// pega o lock por conta própria). Idempotente do lado do callmanager (só age no cruzamento 0↔>0).
+func (m *SctpRelayManager) notifyUsable() {
+	if m.onUsableChange == nil {
+		return
+	}
+	m.onUsableChange(m.ConnectedCount())
+}
 
 func (m *SctpRelayManager) ResendSubscriptions() {
 	m.mu.Lock()
@@ -179,6 +194,7 @@ func (m *SctpRelayManager) connectToRelay(info RelayConfig) {
 		if m.onConnected != nil {
 			m.onConnected(info.IP, info.Port)
 		}
+		m.notifyUsable()
 	})
 	channel.OnClose(func() { m.closeConnection(id) })
 	channel.OnMessage(func(msg webrtc.DataChannelMessage) {
@@ -418,6 +434,7 @@ func (m *SctpRelayManager) failConnection(conn *relayConnection) {
 	delete(m.connections, conn.id)
 	m.mu.Unlock()
 	m.teardown(conn)
+	m.notifyUsable()
 }
 
 func (m *SctpRelayManager) closeConnection(id string) {
@@ -431,6 +448,7 @@ func (m *SctpRelayManager) closeConnection(id string) {
 	delete(m.connections, id)
 	m.mu.Unlock()
 	m.teardown(conn)
+	m.notifyUsable()
 }
 
 func (m *SctpRelayManager) teardown(conn *relayConnection) {
