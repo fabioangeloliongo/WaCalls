@@ -19,6 +19,7 @@ type RelayTransport interface {
 	HasConnection() bool
 	ConnectedCount() int
 	Cleanup()
+	DropAllForDebug() int // gatilho de TESTE: fecha nossos relays p/ exercitar a reconexão
 }
 
 var _ RelayTransport = (*transport.SctpRelayManager)(nil)

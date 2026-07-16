@@ -31,6 +31,8 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/accept", s.handleAccept)
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/reject", s.handleReject)
 	mux.HandleFunc("DELETE /api/sessions/{sid}/calls/{id}", s.handleEndCall)
+	// TESTE de reconexão: fecha nossos relays ao vivo p/ disparar a FSM media-lost→reconnecting→restored.
+	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/debug/drop-relay", s.handleDebugDropRelay)
 	mux.HandleFunc("GET /api/sessions/{sid}/history", s.handleHistory)
 
 	mux.HandleFunc("GET /api/events", s.handleEvents)
@@ -181,6 +183,24 @@ func (s *server) handleEndCall(w http.ResponseWriter, r *http.Request) {
 	if sess := s.sessionByID(w, r.PathValue("sid")); sess != nil {
 		s.doEndCall(sess, w, r)
 	}
+}
+
+// handleDebugDropRelay fecha nossos relays da chamada ao vivo p/ TESTAR a reconexão
+// (media lost → reconnecting → restored). Token-gated como as demais rotas /api/.
+func (s *server) handleDebugDropRelay(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	id := r.PathValue("id")
+	ac, ok := sess.reg.get(id)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such call"})
+		return
+	}
+	dropped := ac.cm.DebugDropRelays()
+	s.log.Warn("🧪 [DEBUG] drop-relay acionado via HTTP", "session", sess.id, "call", id, "dropped", dropped)
+	writeJSON(w, http.StatusOK, map[string]any{"dropped": dropped})
 }
 
 func (s *server) handleHistory(w http.ResponseWriter, r *http.Request) {

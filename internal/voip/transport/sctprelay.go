@@ -468,6 +468,27 @@ func (m *SctpRelayManager) teardown(conn *relayConnection) {
 	}
 }
 
+// DropAllForDebug fecha TODOS os relays abertos de propósito — gatilho de TESTE da
+// reconexão. Segue o mesmo caminho de uma queda natural (remove do map + teardown) e
+// então notifica usable UMA vez → o callmanager vê usable==0, entra em "reconnecting" e
+// re-disca os endpoints armazenados. Exposto só via endpoint de debug token-gated; não é
+// usado em fluxo normal. Retorna quantos relays foram fechados.
+func (m *SctpRelayManager) DropAllForDebug() int {
+	m.mu.Lock()
+	conns := make([]*relayConnection, 0, len(m.connections))
+	for id, c := range m.connections {
+		c.state = relayStateClosed
+		conns = append(conns, c)
+		delete(m.connections, id)
+	}
+	m.mu.Unlock()
+	for _, c := range conns {
+		m.teardown(c)
+	}
+	m.notifyUsable() // uma vez, após remover todos → usable==0 (dispara media lost)
+	return len(conns)
+}
+
 func (m *SctpRelayManager) Cleanup() {
 	m.mu.Lock()
 	conns := make([]*relayConnection, 0, len(m.connections))

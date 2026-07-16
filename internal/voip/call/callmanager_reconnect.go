@@ -72,6 +72,22 @@ func (m *CallManager) onRelayUsableChange(usable int) {
 	m.mu.Unlock()
 }
 
+// DebugDropRelays fecha NOSSOS relays de propósito p/ exercitar a reconexão de forma
+// determinística (endpoint de debug). Só age se houver chamada ativa. Retorna quantos
+// relays foram fechados (0 = sem chamada/relay). Dispara onRelayUsableChange(0) →
+// media lost → reconnecting → re-disca → media restored.
+func (m *CallManager) DebugDropRelays() int {
+	m.mu.Lock()
+	call := m.currentCall
+	m.mu.Unlock()
+	if call == nil {
+		return 0
+	}
+	n := m.relay.DropAllForDebug()
+	m.log.Warn("🧪 [DEBUG] relays fechados manualmente p/ testar reconexão", "call_id", call.CallID, "dropped", n)
+	return n
+}
+
 // startReconnectTimerLocked arma (ou re-arma) o grace timer. Chamado com m.mu travado.
 func (m *CallManager) startReconnectTimerLocked(callID string) {
 	if m.reconnectTimer != nil {
