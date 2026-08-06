@@ -127,6 +127,9 @@ func (m *CallManager) handleAudioRelayData(data []byte) {
 	}
 	srtp := m.srtpSession
 	codec := m.codec
+	// Estado ATIVO (atendido) capturado sob o mesmo lock: só entregamos o áudio do peer
+	// quando a chamada está ativa (ver gate abaixo).
+	active := m.currentCall != nil && m.currentCall.StateData.State == core.CallStateActive
 	m.mu.Unlock()
 
 	pkt, err := srtp.Unprotect(data)
@@ -139,6 +142,14 @@ func (m *CallManager) handleAudioRelayData(data []byte) {
 	}
 	pcm, err := codec.Decode(pkt.Payload)
 	if err != nil || len(pcm) == 0 {
+		return
+	}
+	// 🚦 GATE DE ATENDIMENTO: só relaya o áudio do peer quando a chamada está ATIVA. Antes do
+	// accept, o WhatsApp pode entregar pacotes de pré-atendimento/conforto; se relayados, o 1º
+	// frame abriria o gate de "atendeu" na ponte LiveKit (publishOnce → track 'caller') e a IA
+	// falaria a abertura DURANTE o ring → o cliente perdia a 1ª parte ao atender de fato. O
+	// Unprotect/decode acima roda sempre (mantém o estado SRTP consistente); só a ENTREGA é gated.
+	if !active {
 		return
 	}
 	if m.OnPeerAudio != nil {
