@@ -30,6 +30,9 @@ primary_region = "gru"
     method = "GET"
     path = "/healthz"
 
+# CPU DEDICADA (2026-08-22): mídia em tempo real (WebRTC + PCM + codec WhatsApp)
+# sofria jitter na shared-cpu-1x (burstável/throttle) sob ligações simultâneas.
+# performance-1x = 1 vCPU dedicado + 2GB. NÃO voltar pra shared sem medir o pico.
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "512mb"
+  size = "performance-1x"
+  memory = "2048mb"
