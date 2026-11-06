@@ -37,10 +37,13 @@ func main() {
 	}
 	defer srv.sessions.disconnectAll()
 
+	// Antes de restaurar: conectar com versão vencida faz o WhatsApp recusar todas as sessões.
+	srv.sessions.refreshWAVersion(ctx)
 	if err := srv.sessions.Restore(ctx); err != nil {
 		log.Error("session restore failed", "err", err)
 		os.Exit(1)
 	}
+	go srv.sessions.runReconnectLoop(ctx)
 
 	httpSrv := &http.Server{Addr: *addr, Handler: srv.routes()}
 	go func() {
