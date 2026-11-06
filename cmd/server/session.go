@@ -16,6 +16,7 @@ import (
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
 	waBinary "go.mau.fi/whatsmeow/binary"
+	wastore "go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
@@ -29,8 +30,9 @@ type Session struct {
 	client *whatsmeow.Client
 	reg    *callRegistry
 
-	mu   sync.Mutex
-	auth AuthSnapshot
+	mu      sync.Mutex
+	auth    AuthSnapshot
+	retryAt time.Time // antes disso o laço de reconexão não tenta de novo (ver reconnect.go)
 
 	presenceOnce sync.Once // garante 1 keepalive de presença por sessão
 }
@@ -230,6 +232,7 @@ func (s *Session) handleEvent(rawEvt any) {
 		if id := s.client.Store.ID; id != nil {
 			_ = s.mgr.store.setJID(s.mgr.appCtx, s.id, id.String())
 		}
+		s.clearRetry()
 		s.setAuth(AuthSnapshot{State: "open", Paired: true})
 		// Companheiro (coex) só continua "callable" se anunciar presença ativa.
 		// Sem isso o WA tende a marcar o device como uncallable após a 1ª ligação
@@ -238,6 +241,17 @@ func (s *Session) handleEvent(rawEvt any) {
 		s.startPresenceKeepalive()
 	case *events.LoggedOut:
 		s.setAuth(AuthSnapshot{State: "logged_out", Paired: false})
+	case *events.Disconnected:
+		s.markDown("disconnected", 0)
+	case *events.StreamReplaced:
+		s.markDown("stream_replaced", replacedRetryDelay)
+	case *events.ClientOutdated:
+		s.mgr.versionStale.Store(true)
+		s.markDown("client_outdated", outdatedRetryDelay, "versao", wastore.GetWAVersion().String())
+	case *events.TemporaryBan:
+		s.markDown("temporary_ban", banRetryDelay(evt.Expire), "codigo", int(evt.Code), "expira_em", evt.Expire)
+	case *events.ConnectFailure:
+		s.markDown("connect_failure", failureRetryDelay, "codigo", int(evt.Reason), "mensagem", evt.Message)
 	case *events.CallOffer:
 		s.onIncomingOffer(ctx, evt)
 	case *events.CallAccept:
@@ -330,6 +344,10 @@ func (s *Session) info() SessionInfo {
 	s.mu.Lock()
 	a := s.auth
 	s.mu.Unlock()
+	// Nem toda queda gera evento: "open" só vale com a conexão de pé.
+	if a.State == "open" && !s.client.IsConnected() {
+		a.State = "connecting"
+	}
 	jid := ""
 	if id := s.client.Store.ID; id != nil {
 		jid = id.String()

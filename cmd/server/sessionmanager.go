@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -21,6 +22,9 @@ type SessionManager struct {
 	log       *slog.Logger
 	maxCalls  int
 
+	fetchVersion versionFetcher
+	versionStale atomic.Bool // alguma sessão recebeu 405: buscar a versão antes de reconectar
+
 	mu       sync.RWMutex
 	sessions map[string]*Session
 	order    []string
@@ -36,6 +40,8 @@ func newSessionManager(ctx context.Context, container *sqlstore.Container, broke
 		log:       log,
 		maxCalls:  maxCalls,
 		sessions:  map[string]*Session{},
+
+		fetchVersion: fetchLatestWAVersion,
 	}
 }
 
@@ -193,14 +199,18 @@ func (m *SessionManager) Pair(id string) error {
 	return nil
 }
 
-func (m *SessionManager) disconnectAll() {
+func (m *SessionManager) all() []*Session {
 	m.mu.RLock()
+	defer m.mu.RUnlock()
 	all := make([]*Session, 0, len(m.sessions))
 	for _, s := range m.sessions {
 		all = append(all, s)
 	}
-	m.mu.RUnlock()
-	for _, s := range all {
+	return all
+}
+
+func (m *SessionManager) disconnectAll() {
+	for _, s := range m.all() {
 		s.shutdown()
 	}
 }

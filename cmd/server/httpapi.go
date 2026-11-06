@@ -214,6 +214,10 @@ func (s *server) doStartCall(sess *Session, w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "not paired"})
 		return
 	}
+	if !sess.client.IsConnected() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "session not connected"})
+		return
+	}
 	var body struct {
 		Phone         string `json:"phone"`
 		DurationMs    int    `json:"duration_ms"`
